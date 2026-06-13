@@ -2,9 +2,8 @@ name: 贵阳天气预报推送
 
 on:
   schedule:
-    # 每天北京时间 22:00（UTC 14:00）
     - cron: '0 14 * * *'
-  workflow_dispatch:  # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   weather:
@@ -17,114 +16,112 @@ jobs:
           node-version: '20'
 
       - name: 安装依赖
-        run: npm install nodemailer
+        run: |
+          npm install nodemailer
+          npm install node-fetch@2
 
       - name: 获取天气并发送邮件
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const { execSync } = require('child_process');
-            execSync('pip3 install requests', { stdio: 'inherit' });
-
             const SENDER_EMAIL = process.env.SENDER_EMAIL;
             const SMTP_PASSWORD = process.env.SMTP_PASSWORD;
             const RECEIVER_EMAIL = process.env.RECEIVER_EMAIL;
-
-            const fetch = require('node-fetch');
-
-            // 获取天气数据
-            const weatherRes = await fetch('https://wttr.in/Guiyang?format=j1');
-            const weatherData = await weatherRes.json();
-
-            const tomorrow = weatherData.weather[1];
-            const maxtemp = tomorrow.maxtempC;
-            const mintemp = tomorrow.mintempC;
-            const weatherDesc = tomorrow.weather[0].desc;
-
-            // 计算明天日期
-            const now = new Date();
-            const tomorrowDate = new Date(now);
-            tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-
-            const year = tomorrowDate.getFullYear();
-            const month = String(tomorrowDate.getMonth() + 1).padStart(2, '0');
-            const day = String(tomorrowDate.getDate()).padStart(2, '0');
-            const dateStr = `${year}年${month}月${day}日`;
-
-            // 获取降雨概率
-            const hourlyData = tomorrow.hourly || [];
-            let maxRainChance = 0;
-            hourlyData.forEach(hour => {
-              const rain = parseInt(hour.chanceofrain) || 0;
-              if (rain > maxRainChance) maxRainChance = rain;
-            });
-
-            // 生成穿衣建议
-            let clothingAdvice = '';
-            if (maxtemp >= 28) {
-              clothingAdvice = `- 上装：薄衬衫/短袖 T恤
-- 下装：长裤/休闲裤
-- 备注：午间较热，建议洋葱式穿搭`;
-            } else if (maxtemp >= 22) {
-              clothingAdvice = `- 上装：长袖衬衫/薄卫衣
-- 下装：长裤/牛仔裤
-- 备注：早晚温差较大，注意增减衣物`;
-            } else if (maxtemp >= 15) {
-              clothingAdvice = `- 上装：卫衣/薄外套
-- 下装：长裤
-- 备注：建议穿外套，早晚偏凉`;
-            } else {
-              clothingAdvice = `- 上装：厚外套/毛衣
-- 下装：保暖长裤
-- 备注：注意保暖，建议穿厚外套`;
-            }
-
-            // 生成降雨提醒
-            let rainAdvice = '';
-            if (maxRainChance >= 80) {
-              rainAdvice = `🌧 降雨概率 ${maxRainChance}%，建议：务必带伞！`;
-            } else if (maxRainChance >= 50) {
-              rainAdvice = `🌧 降雨概率 ${maxRainChance}%，建议：备一把伞以防万一`;
-            } else {
-              rainAdvice = `🌧 降雨概率 ${maxRainChance}%，建议：无需带伞`;
-            }
-
-            // 组装邮件正文
-            const body = `【贵阳明日天气】
-📅 日期：${dateStr}
-🌤 天气：${weatherDesc}
-🌡 温度：${mintemp}°C ~ ${maxtemp}°C
-🌧 降雨概率：${maxRainChance}%
-
-【穿衣建议】
-根据明日温度 ${mintemp}°C~${maxtemp}°C、天气 ${weatherDesc}，建议穿着：
-${clothingAdvice}
-
-【出门提醒】
-${rainAdvice}
-🌡 温度变化：早晚温差 ${maxtemp - mintemp}°C，注意适时增减衣物
-
----
-📮 此邮件由 GitHub Actions 自动化任务每日 22:00 自动推送`;
-
-            // 发送邮件
+            const https = require('https');
             const nodemailer = require('nodemailer');
-            const transporter = nodemailer.createTransport({
-              host: 'smtp.qq.com',
-              port: 465,
-              secure: true,
-              auth: {
-                user: SENDER_EMAIL,
-                pass: SMTP_PASSWORD
+
+            function getWeather() {
+              return new Promise((resolve, reject) => {
+                https.get('https://wttr.in/Guiyang?format=j1', (res) => {
+                  let data = '';
+                  res.on('data', (chunk) => { data += chunk; });
+                  res.on('end', () => {
+                    try { resolve(JSON.parse(data)); }
+                    catch(e) { reject(e); }
+                  });
+                }).on('error', reject);
+              });
+            }
+
+            async function main() {
+              const weatherData = await getWeather();
+              const tomorrow = weatherData.weather[1];
+              const maxtemp = tomorrow.maxtempC;
+              const mintemp = tomorrow.mintempC;
+              const weatherDesc = tomorrow.weather[0].desc;
+
+              const now = new Date();
+              const tomorrowDate = new Date(now);
+              tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+
+              const year = tomorrowDate.getFullYear();
+              const month = String(tomorrowDate.getMonth() + 1).padStart(2, '0');
+              const day = String(tomorrowDate.getDate()).padStart(2, '0');
+              const dateStr = year + '年' + month + '月' + day + '日';
+
+              let maxRainChance = 0;
+              const hourlyData = tomorrow.hourly || [];
+              hourlyData.forEach(hour => {
+                const rain = parseInt(hour.chanceofrain) || 0;
+                if (rain > maxRainChance) maxRainChance = rain;
+              });
+
+              let clothingAdvice = '';
+              if (maxtemp >= 28) {
+                clothingAdvice = '- 上装：薄衬衫/短袖 T恤\n- 下装：长裤/休闲裤\n- 备注：午间较热，建议洋葱式穿搭';
+              } else if (maxtemp >= 22) {
+                clothingAdvice = '- 上装：长袖衬衫/薄卫衣\n- 下装：长裤/牛仔裤\n- 备注：早晚温差较大，注意增减衣物';
+              } else if (maxtemp >= 15) {
+                clothingAdvice = '- 上装：卫衣/薄外套\n- 下装：长裤\n- 备注：建议穿外套，早晚偏凉';
+              } else {
+                clothingAdvice = '- 上装：厚外套/毛衣\n- 下装：保暖长裤\n- 备注：注意保暖，建议穿厚外套';
               }
-            });
 
-            await transporter.sendMail({
-              from: SENDER_EMAIL,
-              to: RECEIVER_EMAIL,
-              subject: `贵阳明日天气提醒 - ${dateStr}`,
-              text: body
-            });
+              let rainAdvice = '';
+              if (maxRainChance >= 80) {
+                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：务必带伞！';
+              } else if (maxRainChance >= 50) {
+                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：备一把伞以防万一';
+              } else {
+                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：无需带伞';
+              }
 
-            console.log('✅ 邮件发送成功');
+              const tempDiff = maxtemp - mintemp;
+              const body = '【贵阳明日天气】\n' +
+                '日期：' + dateStr + '\n' +
+                '天气：' + weatherDesc + '\n' +
+                '温度：' + mintemp + '°C ~ ' + maxtemp + '°C\n' +
+                '降雨概率：' + maxRainChance + '%\n\n' +
+                '【穿衣建议】\n' +
+                '根据明日温度 ' + mintemp + '°C~' + maxtemp + '°C、天气 ' + weatherDesc + '，建议穿着：\n' +
+                clothingAdvice + '\n\n' +
+                '【出门提醒】\n' +
+                '降雨概率 ' + maxRainChance + '%，' + rainAdvice + '\n' +
+                '温度变化：早晚温差 ' + tempDiff + '°C，注意适时增减衣物\n\n' +
+                '此邮件由 GitHub Actions 自动化任务每日 22:00 自动推送';
+
+              const transporter = nodemailer.createTransport({
+                host: 'smtp.qq.com',
+                port: 465,
+                secure: true,
+                auth: {
+                  user: SENDER_EMAIL,
+                  pass: SMTP_PASSWORD
+                }
+              });
+
+              await transporter.sendMail({
+                from: SENDER_EMAIL,
+                to: RECEIVER_EMAIL,
+                subject: '贵阳明日天气提醒 - ' + dateStr,
+                text: body
+              });
+
+              console.log('邮件发送成功');
+            }
+
+            main().catch(err => {
+              console.error('错误:', err);
+              process.exit(1);
+            });
