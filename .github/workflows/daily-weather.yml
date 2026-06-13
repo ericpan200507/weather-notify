@@ -16,9 +16,7 @@ jobs:
           node-version: '20'
 
       - name: 安装依赖
-        run: |
-          npm install nodemailer
-          npm install node-fetch@2
+        run: npm install nodemailer
 
       - name: 获取天气并发送邮件
         uses: actions/github-script@v7
@@ -46,10 +44,25 @@ jobs:
 
             async function main() {
               const weatherData = await getWeather();
-              const tomorrow = weatherData.weather[1];
-              const maxtemp = tomorrow.maxtempC;
-              const mintemp = tomorrow.mintempC;
-              const weatherDesc = tomorrow.weather[0].desc;
+              const weatherList = weatherData.weather;
+
+              if (!weatherList || !Array.isArray(weatherList) || weatherList.length < 2) {
+                console.error('天气数据结构异常:', JSON.stringify(weatherData));
+                throw new Error('天气数据获取失败');
+              }
+
+              const tomorrow = weatherList[1];
+              if (!tomorrow) {
+                throw new Error('明天天气数据为空');
+              }
+
+              const maxtemp = parseInt(tomorrow.maxtempC) || 25;
+              const mintemp = parseInt(tomorrow.mintempC) || 15;
+
+              const weatherDescArr = tomorrow.weather || [];
+              const weatherDesc = weatherDescArr.length > 0 && weatherDescArr[0] && weatherDescArr[0].desc
+                ? weatherDescArr[0].desc
+                : '多云';
 
               const now = new Date();
               const tomorrowDate = new Date(now);
@@ -63,13 +76,15 @@ jobs:
               let maxRainChance = 0;
               const hourlyData = tomorrow.hourly || [];
               hourlyData.forEach(hour => {
-                const rain = parseInt(hour.chanceofrain) || 0;
-                if (rain > maxRainChance) maxRainChance = rain;
+                if (hour && hour.chanceofrain !== undefined) {
+                  const rain = parseInt(hour.chanceofrain) || 0;
+                  if (rain > maxRainChance) maxRainChance = rain;
+                }
               });
 
               let clothingAdvice = '';
               if (maxtemp >= 28) {
-                clothingAdvice = '- 上装：薄衬衫/短袖 T恤\n- 下装：长裤/休闲裤\n- 备注：午间较热，建议洋葱式穿搭';
+                clothingAdvice = '- 上装：薄衬衫/短袖 T 恤\n- 下装：长裤/休闲裤\n- 备注：午间较热，注意防暑';
               } else if (maxtemp >= 22) {
                 clothingAdvice = '- 上装：长袖衬衫/薄卫衣\n- 下装：长裤/牛仔裤\n- 备注：早晚温差较大，注意增减衣物';
               } else if (maxtemp >= 15) {
@@ -80,25 +95,33 @@ jobs:
 
               let rainAdvice = '';
               if (maxRainChance >= 80) {
-                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：务必带伞！';
+                rainAdvice = '务必带伞！';
               } else if (maxRainChance >= 50) {
-                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：备一把伞以防万一';
+                rainAdvice = '备一把伞以防万一';
               } else {
-                rainAdvice = '降雨概率 ' + maxRainChance + '%，建议：无需带伞';
+                rainAdvice = '无需带伞';
               }
 
               const tempDiff = maxtemp - mintemp;
-              const body = '【贵阳明日天气】\n' +
+              const body = '贵阳明日天气\n' +
+                '====================\n' +
                 '日期：' + dateStr + '\n' +
                 '天气：' + weatherDesc + '\n' +
                 '温度：' + mintemp + '°C ~ ' + maxtemp + '°C\n' +
-                '降雨概率：' + maxRainChance + '%\n\n' +
-                '【穿衣建议】\n' +
-                '根据明日温度 ' + mintemp + '°C~' + maxtemp + '°C、天气 ' + weatherDesc + '，建议穿着：\n' +
-                clothingAdvice + '\n\n' +
-                '【出门提醒】\n' +
-                '降雨概率 ' + maxRainChance + '%，' + rainAdvice + '\n' +
-                '温度变化：早晚温差 ' + tempDiff + '°C，注意适时增减衣物\n\n' +
+                '降雨概率：' + maxRainChance + '%\n' +
+                '====================\n\n' +
+                '穿衣建议\n' +
+                '====================\n' +
+                '温度：' + mintemp + '°C ~ ' + maxtemp + '°C\n' +
+                '天气：' + weatherDesc + '\n' +
+                clothingAdvice + '\n' +
+                '====================\n\n' +
+                '出门提醒\n' +
+                '====================\n' +
+                '降雨概率：' + maxRainChance + '%\n' +
+                '建议：' + rainAdvice + '\n' +
+                '温差：早晚温差 ' + tempDiff + '°C，注意增减衣物\n' +
+                '====================\n\n' +
                 '此邮件由 GitHub Actions 自动化任务每日 22:00 自动推送';
 
               const transporter = nodemailer.createTransport({
@@ -122,6 +145,6 @@ jobs:
             }
 
             main().catch(err => {
-              console.error('错误:', err);
+              console.error('错误:', err.message || err);
               process.exit(1);
             });
