@@ -1,0 +1,75 @@
+name: 贵阳天气预报推送
+
+on:
+  schedule:
+    # 每天北京时间 22:00（UTC 14:00）
+    - cron: '0 14 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  weather:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 获取天气并发送邮件
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // 安装依赖
+            const { execSync } = require('child_process');
+            execSync('pip3 install requests', { stdio: 'inherit' });
+            
+            const { SENDER_EMAIL, SMTP_PASSWORD, RECEIVER_EMAIL } = process.env;
+            
+            // 获取天气
+            const weather = await fetch('https://wttr.in/Guiyang?format=j1')
+              .then(r => r.json());
+            
+            const tomorrow = weather.weather[1];
+            const maxtemp = tomorrow.maxtempC;
+            const mintemp = tomorrow.mintempC;
+            const weatherDesc = tomorrow.weather[0].desc;
+            
+            // 生成邮件内容
+            const now = new Date();
+            const tomorrowDate = new Date(now);
+            tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+            
+            const body = `【贵阳明日天气】
+📅 日期：${tomorrowDate.getFullYear()}年${String(tomorrowDate.getMonth()+1).padStart(2,'0')}月${String(tomorrowDate.getDate()).padStart(2,'0')}日
+🌤 天气：${weatherDesc}
+🌡 温度：${mintemp}°C ~ ${maxtemp}°C
+🌧 降雨概率：${tomorrow.hourly[0].chanceofrain || 0}%
+
+【穿衣建议】
+根据明日温度 ${mintemp}°C~${maxtemp}°C、天气 ${weatherDesc}，建议穿着：
+- 上装：${maxtemp >= 28 ? '薄衬衫/短袖T恤' : maxtemp >= 22 ? '长袖衬衫/薄卫衣' : '卫衣/薄外套'}
+- 下装：长裤/休闲裤
+- 备注：${maxtemp >= 28 ? '午间较热，注意防暑' : maxtemp >= 22 ? '早晚温差较大，注意增减衣物' : '注意保暖'}
+
+【出门提醒】
+- 降雨概率 ${tomorrow.hourly[0].chanceofrain || 0}%，建议：${parseInt(tomorrow.hourly[0].chanceofrain) >= 50 ? '务必带伞' : '无需带伞'}
+
+---
+📮 此邮件由 GitHub Actions 自动化任务每日 22:00 自动推送`;
+
+            const nodemailer = require('nodemailer');
+            const transporter = nodemailer.createTransport({
+              host: 'smtp.qq.com',
+              port: 465,
+              secure: true,
+              auth: {
+                user: SENDER_EMAIL,
+                pass: SMTP_PASSWORD
+              }
+            });
+
+            await transporter.sendMail({
+              from: SENDER_EMAIL,
+              to: RECEIVER_EMAIL,
+              subject: `贵阳明日天气提醒 - ${tomorrowDate.getFullYear()}年${tomorrowDate.getMonth()+1}月${tomorrowDate.getDate()}日`,
+              text: body
+            });
+            
+            console.log('✅ 邮件发送成功');
